@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # Usage:
-#   ./steam_scraper.sh 570
+#   ./stfetch 570
 #    or
-#   ./steam_scraper.sh "Half-Life 2"
+#   ./stfetch "Half-Life 2"
 
 set -euo pipefail
 INPUT="$*"
