@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+# Usage:
+#   ./steam_scraper.sh 570
+#    or
+#   ./steam_scraper.sh "Half-Life 2"
+
+set -euo pipefail
+INPUT="$*"
+
+resolve_appid() {
+  local name_encoded search_html appid
+  name_encoded=$(printf "%s" "$1" | sed 's/ /+/g; s/[^[:alnum:]+]//g')
+  search_html=$(curl -sSf "https://store.steampowered.com/search/?term=${name_encoded}&category1=998")
+  appid=$(printf "%s" "$search_html" \
+    | grep -oP 'data-ds-appid="\K[0-9]+' \
+    | head -1)
+  if [[ -z "$appid" ]]; then
+    echo "Error: Could not resolve AppID for '$1'" >&2
+    exit 1
+  fi
+  echo "$appid"
+}
+
+if [[ "$INPUT" =~ ^[0-9]+$ ]]; then
+  APPID="$INPUT"
+else
+  APPID=$(resolve_appid "$INPUT")
+fi
+
+API_URL="https://store.steampowered.com/api/appdetails?appids=${APPID}&cc=us&l=en"
+
+response=$(curl -sSf "$API_URL")
+
+if ! jq -e ".[\"$APPID\"].success" <<<"$response" &>/dev/null; then
+  echo "Error: Could not retrieve data for AppID $APPID" >&2
+  exit 1
+fi
+
+data=".[\"${APPID}\"].data"
+
+name=$(jq -r "${data}.name" <<<"$response")
+release_date=$(jq -r "${data}.release_date.date" <<<"$response")
+is_free=$(jq -r "${data}.is_free" <<<"$response")
+
+if [[ "$is_free" == "true" ]]; then
+  price="Free to Play"
+else
+  price=$(jq -r "${data}.price_overview.final_formatted" <<<"$response")
+fi
+
+if jq -e "${data}.metacritic.score" <<<"$response" &>/dev/null; then
+  meta_score=$(jq -r "${data}.metacritic.score" <<<"$response")
+  reviews="Metacritic Score: ${meta_score}"
+else
+  reviews="No Metacritic data"
+fi
+
+# Output 
+cat <<EOF
+Steam App ID: ${APPID}
+Title       : ${name}
+Release Date: ${release_date}
+Price       : ${price}
+Reviews     : ${reviews}
+EOF
+
