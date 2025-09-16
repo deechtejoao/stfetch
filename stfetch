@@ -1,25 +1,23 @@
 #!/usr/bin/env bash
-
-# Usage:
-#   ./stfetch 570
-#    or
-#   ./stfetch "Half-Life 2"
-
 set -euo pipefail
-INPUT="$*"
+
+readonly RED=$'\e[31m'
+readonly GREEN=$'\e[32m'
+readonly YELLOW=$'\e[33m'
+readonly BLUE=$'\e[34m'
+readonly BOLD=$'\e[1m'
+readonly RESET=$'\e[0m'
+
+INPUT="${*}"
 
 resolve_appid() {
   local name_encoded search_html appid
-  name_encoded=$(printf "%s" "$1" | sed 's/ /+/g; s/[^[:alnum:]+]//g')
-  search_html=$(curl -sSf "https://store.steampowered.com/search/?term=${name_encoded}&category1=998")
-  appid=$(printf "%s" "$search_html" \
-    | grep -oP 'data-ds-appid="\K[0-9]+' \
-    | head -1)
-  if [[ -z "$appid" ]]; then
-    echo "Error: Could not resolve AppID for '$1'" >&2
-    exit 1
-  fi
-  echo "$appid"
+  name_encoded="${1// /+}"
+  name_encoded="${name_encoded//[^[:alnum:]+]/}"
+  search_html=$(curl -fsSL "https://store.steampowered.com/search/?term=${name_encoded}&category1=998")
+  appid=$(grep -oP 'data-ds-appid="\K[0-9]+' <<<"${search_html}" | head -n1)
+  [[ -n "$appid" ]] || { printf '%s%sError:%s Could not resolve AppID for %s\n' "$RED" "$BOLD" "$RESET" "$1" >&2; exit 1; }
+  printf '%s' "$appid"
 }
 
 if [[ "$INPUT" =~ ^[0-9]+$ ]]; then
@@ -29,39 +27,31 @@ else
 fi
 
 API_URL="https://store.steampowered.com/api/appdetails?appids=${APPID}&cc=us&l=en"
+response=$(curl -fsSL "$API_URL")
 
-response=$(curl -sSf "$API_URL")
+jq -e --arg id "$APPID" '.[$id].success' <<<"$response" >/dev/null \
+  || { printf '%s%sError:%s Could not retrieve data for AppID %s\n' "$RED" "$BOLD" "$RESET" "$APPID" >&2; exit 1; }
 
-if ! jq -e ".[\"$APPID\"].success" <<<"$response" &>/dev/null; then
-  echo "Error: Could not retrieve data for AppID $APPID" >&2
-  exit 1
-fi
+name=$(jq -r --arg id "$APPID" '.[$id].data.name' <<<"$response")
+release_date=$(jq -r --arg id "$APPID" '.[$id].data.release_date.date' <<<"$response")
+is_free=$(jq -r --arg id "$APPID" '.[$id].data.is_free' <<<"$response")
 
-data=".[\"${APPID}\"].data"
-
-name=$(jq -r "${data}.name" <<<"$response")
-release_date=$(jq -r "${data}.release_date.date" <<<"$response")
-is_free=$(jq -r "${data}.is_free" <<<"$response")
-
-if [[ "$is_free" == "true" ]]; then
-  price="Free to Play"
+if [[ "$is_free" == true ]]; then
+  price='Free to Play'
 else
-  price=$(jq -r "${data}.price_overview.final_formatted" <<<"$response")
+  price=$(jq -r --arg id "$APPID" '.[$id].data.price_overview.final_formatted' <<<"$response")
 fi
 
-if jq -e "${data}.metacritic.score" <<<"$response" &>/dev/null; then
-  meta_score=$(jq -r "${data}.metacritic.score" <<<"$response")
+if jq -e --arg id "$APPID" '.[$id].data.metacritic.score' <<<"$response" >/dev/null; then
+  meta_score=$(jq -r --arg id "$APPID" '.[$id].data.metacritic.score' <<<"$response")
   reviews="Metacritic Score: ${meta_score}"
 else
-  reviews="No Metacritic data"
+  reviews='No Metacritic data'
 fi
 
-# Output 
-cat <<EOF
-Steam App ID: ${APPID}
-Title       : ${name}
-Release Date: ${release_date}
-Price       : ${price}
-Reviews     : ${reviews}
-EOF
+printf '%s%sSteam App ID:%s %s\n' "$BLUE" "$BOLD" "$RESET" "$APPID"
+printf '%s%sTitle       :%s %s\n' "$GREEN" "$BOLD" "$RESET" "$name"
+printf '%s%sRelease Date:%s %s\n' "$YELLOW" "$BOLD" "$RESET" "$release_date"
+printf '%s%sPrice       :%s %s\n' "$BLUE" "$BOLD" "$RESET" "$price"
+printf '%s%sReviews     :%s %s\n' "$GREEN" "$BOLD" "$RESET" "$reviews"
 
